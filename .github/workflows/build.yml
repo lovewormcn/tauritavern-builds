@@ -207,6 +207,27 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      # app/build.gradle.kts 的 release signingConfig 在 Gradle 配置阶段就会
+      # 强转 keystore.properties 中的字段（即使打 debug 包也执行）；缺少该文件
+      # 会抛 "null cannot be cast to kotlin.String"。用 keytool 现场生成一个
+      # 自签名 keystore 占位，debug 包实际仍由 AGP 的 debug 签名签名。
+      - name: Generate placeholder keystore
+        shell: bash
+        run: |
+          set -euo pipefail
+          keytool -genkeypair -v \
+            -keystore "$RUNNER_TEMP/ci-debug.jks" \
+            -alias ci-debug \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -storepass android -keypass android \
+            -dname "CN=CI Debug, OU=Dev, O=lovewormcn, L=NA, S=NA, C=CN"
+          props="src-tauri/crates/tauritavern/gen/android/keystore.properties"
+          {
+            echo "keyAlias=ci-debug"
+            echo "password=android"
+            echo "storeFile=$RUNNER_TEMP/ci-debug.jks"
+          } > "$props"
+
       - name: Build debug APKs
         uses: tauri-apps/tauri-action@v1
         env:
