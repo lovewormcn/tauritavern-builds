@@ -3,7 +3,8 @@ name: Fork Build
 # 跨仓库构建：本仓库不包含 TauriTavern 源码，运行时从 inputs 指定的
 # 仓库与 ref 实时拉取代码构建。产物发布到滚动 prerelease（tag: ci-builds）。
 # 桌面包无代码签名（Windows SmartScreen / macOS Gatekeeper 需手动放行）；
-# Android 使用 Gradle 自动生成的 debug keystore 签名。
+# Android 优先用 ANDROID_KEY_* secrets 提供的固定 keystore 签名，未配置时
+# 回退为每次随机的自签名 keystore（安装新包需先卸载旧包）。
 
 run-name: Build ${{ inputs.source_repo }}@${{ inputs.source_ref }}
 
@@ -331,10 +332,10 @@ jobs:
           echo "Collected assets:"
           find release-assets -type f -printf '%f  (%k KB)\n' | sort
 
-          # 1 Windows + 2 macOS + 2 Linux + 2 Android = 8 个制品。
+          # 1 Windows + 2 macOS + 2 Linux + 2 Android = 7 个制品。
           count=$(find release-assets -type f | wc -l | tr -d ' ')
-          if [[ "$count" -ne 8 ]]; then
-            echo "Expected 8 release assets, found $count" >&2
+          if [[ "$count" -ne 7 ]]; then
+            echo "Expected 7 release assets, found $count" >&2
             exit 1
           fi
 
