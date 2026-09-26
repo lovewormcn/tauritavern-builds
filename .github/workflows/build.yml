@@ -209,24 +209,60 @@ jobs:
 
       # app/build.gradle.kts 的 release signingConfig 在 Gradle 配置阶段就会
       # 强转 keystore.properties 中的字段（即使打 debug 包也执行）；缺少该文件
-      # 会抛 "null cannot be cast to kotlin.String"。用 keytool 现场生成一个
-      # 自签名 keystore 占位，debug 包实际仍由 AGP 的 debug 签名签名。
-      - name: Generate placeholder keystore
+      # 会抛 "null cannot be cast to kotlin.String"。
+      # 提供了 ANDROID_KEY_BASE64 secret 时使用固定 keystore（debug 包签名稳定，
+      # 可覆盖安装升级）；否则现场生成自签名 keystore 占位（每次构建签名不同，
+      # 安装新包前需先卸载）。
+      - name: Resolve Android keystore
+        id: keystore
+        shell: bash
+        env:
+          ANDROID_KEY_BASE64: ${{ secrets.ANDROID_KEY_BASE64 }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          props="src-tauri/crates/tauritavern/gen/android/keystore.properties"
+          if [[ -n "$ANDROID_KEY_BASE64" ]]; then
+            [[ -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]] || {
+              echo "::error::ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD secrets 缺失" >&2
+              exit 1
+            }
+            printf '%s' "$ANDROID_KEY_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            {
+              echo "keyAlias=$KEY_ALIAS"
+              echo "password=$KEY_PASSWORD"
+              echo "storeFile=$RUNNER_TEMP/release.jks"
+            } > "$props"
+            echo "fixed=true" >> "$GITHUB_OUTPUT"
+            echo "使用固定 keystore 签名（secret）"
+          else
+            echo "未配置 ANDROID_KEY_BASE64，生成临时 keystore 占位"
+            keytool -genkeypair \
+              -keystore "$RUNNER_TEMP/ci-debug.jks" \
+              -alias ci-debug \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass android -keypass android \
+              -dname "CN=CI Debug, OU=Dev, O=lovewormcn, L=NA, S=NA, C=CN"
+            {
+              echo "keyAlias=ci-debug"
+              echo "password=android"
+              echo "storeFile=$RUNNER_TEMP/ci-debug.jks"
+            } > "$props"
+          fi
+
+      # 有固定 keystore 时，让 debug 变体也走 release signingConfig，
+      # 保证历次 CI 出的 debug APK 签名一致、可直接覆盖安装。
+      - name: Pin debug signing config to provided keystore
+        if: steps.keystore.outputs.fixed == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          keytool -genkeypair -v \
-            -keystore "$RUNNER_TEMP/ci-debug.jks" \
-            -alias ci-debug \
-            -keyalg RSA -keysize 2048 -validity 10000 \
-            -storepass android -keypass android \
-            -dname "CN=CI Debug, OU=Dev, O=lovewormcn, L=NA, S=NA, C=CN"
-          props="src-tauri/crates/tauritavern/gen/android/keystore.properties"
-          {
-            echo "keyAlias=ci-debug"
-            echo "password=android"
-            echo "storeFile=$RUNNER_TEMP/ci-debug.jks"
-          } > "$props"
+          gradle="src-tauri/crates/tauritavern/gen/android/app/build.gradle.kts"
+          perl -0pi -e 's/(\n[ \t]*getByName\("debug"\) \{\n)([ \t]*)(manifestPlaceholders\["usesCleartextTraffic"\] = "true")/$1$2signingConfig = signingConfigs.getByName("release")\n$2$3/' "$gradle"
+          grep -q 'getByName("debug")' "$gradle"
+          awk '/getByName\("debug"\)/{f=1} f&&/signingConfig = signingConfigs.getByName\("release"\)/{found=1; exit} END{exit !found}' "$gradle" \
+            || { echo "::error::debug 签名配置注入失败" >&2; exit 1; }
 
       - name: Build debug APKs
         uses: tauri-apps/tauri-action@v1
