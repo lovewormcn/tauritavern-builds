@@ -343,8 +343,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          gh release view "$RELEASE_TAG" >/dev/null 2>&1 || \
+          gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
               --prerelease \
               --title "Fork CI Builds" \
               --notes "滚动测试构建。每次手动触发 workflow 后自动更新。"
@@ -354,7 +355,7 @@ jobs:
         run: |
           set -euo pipefail
           find release-assets -type f -print0 \
-            | xargs -0 gh release upload "$RELEASE_TAG" --clobber
+            | xargs -0 gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --clobber
 
       - name: Remove superseded assets for the same ref
         shell: bash
@@ -406,6 +407,7 @@ jobs:
             printf '同一分支重新构建会替换同名资产；不同分支的资产各自保留，直到超过总数上限。\n'
           } > release-notes.md
           gh release edit "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             --prerelease \
             --title "Fork CI Builds · ${SOURCE_REF}@${SHA12}" \
             --notes-file release-notes.md
